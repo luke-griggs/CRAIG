@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
 Voice Assistant with Wake Word Detection
-Combines wake word detection, speech transcription, LLM processing, and TTS output.
+Implements a JARVIS-style assistant with conversation mode and idle timeout.
 """
 
 import os
 import sys
 import time
 import threading
+import queue
 import signal
 from typing import Optional
+from enum import Enum
 from dotenv import load_dotenv
 from colorama import init, Fore, Style
 
 # Import our modules
 from wake_word_detector import WakeWordDetector, OpenWakeWordDetector
-from audio_transcriber import AudioTranscriber, SimpleAudioRecorder
+from audio_transcriber import AudioTranscriber
 from llm_providers import LLMManager
 from tts_engine import TTSManager
 
@@ -24,6 +26,10 @@ init(autoreset=True)
 
 load_dotenv()
 
+class AssistantMode(Enum):
+    WAKE_WORD = "wake_word"
+    CONVERSATION = "conversation"
+
 class VoiceAssistant:
     def __init__(self, 
                  wake_word: str = "jarvis",
@@ -31,10 +37,9 @@ class VoiceAssistant:
                  llm_provider: str = "openai",
                  llm_model: Optional[str] = None,
                  tts_engine: str = "pyttsx3",
-                 recording_duration: float = 5.0,
-                 use_streaming: bool = True):
+                 idle_timeout: float = 10.0):
         """
-        Initialize Voice Assistant.
+        Initialize Voice Assistant with conversation mode.
         
         Args:
             wake_word: Wake word to listen for
@@ -42,16 +47,20 @@ class VoiceAssistant:
             llm_provider: LLM provider ("openai" or "anthropic")
             llm_model: Optional model override
             tts_engine: TTS engine ("pyttsx3", "gtts", "system")
-            recording_duration: Duration to record after wake word
-            use_streaming: Use streaming transcription (True) or post-processing (False)
+            idle_timeout: Seconds of silence before returning to wake word mode
         """
         print(f"{Fore.CYAN}Initializing Voice Assistant...{Style.RESET_ALL}")
         
         self.wake_word = wake_word
-        self.recording_duration = recording_duration
-        self.use_streaming = use_streaming
-        self.is_listening = False
-        self.is_processing = False
+        self.idle_timeout = idle_timeout
+        
+        # State management
+        self.mode = AssistantMode.WAKE_WORD
+        self.is_running = False
+        self.last_interaction = time.time()
+        
+        # Communication between threads
+        self.transcript_queue = queue.Queue()
         
         # Initialize components
         self._init_wake_word_detector(use_porcupine)
@@ -59,14 +68,18 @@ class VoiceAssistant:
         self._init_llm(llm_provider, llm_model)
         self._init_tts(tts_engine)
         
+        # Streaming thread (will be created when entering conversation mode)
+        self.streaming_thread = None
+        
         # System prompt for the assistant
-        self.system_prompt = """You are a helpful voice assistant. 
+        self.system_prompt = """You are JARVIS, a helpful AI assistant. 
         Keep your responses concise and natural for speech. 
         Avoid using markdown formatting or special characters.
         Be friendly and conversational."""
         
         print(f"{Fore.GREEN}✓ Voice Assistant initialized!{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}Wake word: '{wake_word}'{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}Idle timeout: {idle_timeout}s{Style.RESET_ALL}")
     
     def _init_wake_word_detector(self, use_porcupine: bool):
         """Initialize wake word detector."""
@@ -96,22 +109,16 @@ class VoiceAssistant:
             )
     
     def _init_transcriber(self):
-        """Initialize audio transcriber."""
+        """Initialize audio transcriber with queue-based communication."""
         try:
-            if self.use_streaming:
-                self.transcriber = AudioTranscriber(
-                    on_transcript=self.on_partial_transcript,
-                    on_final_transcript=self.on_final_transcript,
-                    sample_rate=16000
-                )
-            else:
-                self.transcriber = SimpleAudioRecorder(sample_rate=16000)
+            self.transcriber = AudioTranscriber(
+                transcript_queue=self.transcript_queue,
+                sample_rate=16000
+            )
             print(f"{Fore.GREEN}✓ Transcriber ready{Style.RESET_ALL}")
         except Exception as e:
             print(f"{Fore.RED}✗ Transcriber error: {e}{Style.RESET_ALL}")
-            # Fallback to simple recorder
-            self.transcriber = SimpleAudioRecorder(sample_rate=16000)
-            self.use_streaming = False
+            raise
     
     def _init_llm(self, provider: str, model: Optional[str]):
         """Initialize LLM provider."""
@@ -134,48 +141,72 @@ class VoiceAssistant:
     
     def on_wake_word_detected(self):
         """Callback when wake word is detected."""
-        if self.is_processing:
-            return
+        if self.mode != AssistantMode.WAKE_WORD:
+            return  # Ignore if already in conversation
+        
+        # Immediately switch mode to prevent duplicate detections
+        self.mode = AssistantMode.CONVERSATION
         
         print(f"\n{Fore.GREEN}▶ Wake word detected!{Style.RESET_ALL}")
         
-        # Play acknowledgment sound or speak
+        # Enter conversation mode
+        self.enter_conversation_mode()
+    
+    def enter_conversation_mode(self):
+        """Enter conversation mode and start streaming."""
+        # Mode already set in on_wake_word_detected
+        self.last_interaction = time.time()
+        
+        # Stop wake word detection
+        self.wake_detector.stop_listening()
+        
+        # Acknowledge activation
+        print(f"{Fore.YELLOW}Entering conversation mode...{Style.RESET_ALL}")
         self.tts.speak("Yes?", blocking=True)
         
-        # Start recording/transcribing
-        self.is_processing = True
-        threading.Thread(target=self.process_voice_input).start()
+        # Start streaming transcription
+        self.transcriber.start_streaming()
+        
+        print(f"{Fore.CYAN}Listening... (silence for {self.idle_timeout}s to exit){Style.RESET_ALL}")
     
-    def on_partial_transcript(self, text: str):
-        """Callback for partial transcripts (streaming only)."""
-        print(f"{Fore.CYAN}〉 {text}{Style.RESET_ALL}", end="\r")
+    def exit_conversation_mode(self):
+        """Exit conversation mode and return to wake word detection."""
+        print(f"\n{Fore.YELLOW}Exiting conversation mode...{Style.RESET_ALL}")
+        
+        # Stop streaming
+        self.transcriber.stop_streaming()
+        
+        # Clear any pending transcripts
+        while not self.transcript_queue.empty():
+            try:
+                self.transcript_queue.get_nowait()
+            except queue.Empty:
+                break
+        
+        # Say goodbye
+        self.tts.speak("Going back to sleep", blocking=True)
+        
+        # Return to wake word mode
+        self.mode = AssistantMode.WAKE_WORD
+        
+        # Restart wake word detection
+        self.wake_detector.start_listening()
+        
+        print(f"{Fore.CYAN}Listening for wake word: '{self.wake_word}'...{Style.RESET_ALL}")
     
-    def on_final_transcript(self, text: str):
-        """Callback for final transcript."""
-        print(f"\n{Fore.BLUE}User: {text}{Style.RESET_ALL}")
-        self.last_transcript = text
-    
-    def process_voice_input(self):
-        """Process voice input after wake word."""
+    def process_transcript(self, transcript: str):
+        """Process a transcript and generate response."""
+        print(f"\n{Fore.BLUE}User: {transcript}{Style.RESET_ALL}")
+        
+        # Check for exit commands
+        if transcript.lower() in ["goodbye", "bye", "exit", "stop", "go to sleep"]:
+            self.exit_conversation_mode()
+            return
+        
+        # Pause streaming during response
+        self.transcriber.pause_streaming()
+        
         try:
-            # Record and transcribe
-            if self.use_streaming:
-                print(f"{Fore.YELLOW}Listening...{Style.RESET_ALL}")
-                self.transcriber.start_recording(duration=self.recording_duration)
-                time.sleep(self.recording_duration + 1)
-                transcript = self.transcriber.stop_recording()
-            else:
-                print(f"{Fore.YELLOW}Recording for {self.recording_duration}s...{Style.RESET_ALL}")
-                audio_data = self.transcriber.record_audio(duration=self.recording_duration)
-                print(f"{Fore.YELLOW}Transcribing...{Style.RESET_ALL}")
-                transcript = self.transcriber.transcribe_audio(audio_data)
-                print(f"{Fore.BLUE}User: {transcript}{Style.RESET_ALL}")
-            
-            if not transcript or transcript.strip() == "":
-                print(f"{Fore.YELLOW}No speech detected{Style.RESET_ALL}")
-                self.is_processing = False
-                return
-            
             # Get response from LLM
             print(f"{Fore.YELLOW}Thinking...{Style.RESET_ALL}")
             response = self.llm.generate_response(
@@ -190,35 +221,65 @@ class VoiceAssistant:
             self.tts.speak(response, blocking=True)
             
         except Exception as e:
-            print(f"{Fore.RED}Error processing voice input: {e}{Style.RESET_ALL}")
+            print(f"{Fore.RED}Error generating response: {e}{Style.RESET_ALL}")
             self.tts.speak("Sorry, I encountered an error.", blocking=True)
         
         finally:
-            self.is_processing = False
+            # Resume streaming after speaking
+            self.transcriber.resume_streaming()
+            
+            # Update last interaction time
+            self.last_interaction = time.time()
     
-    def start(self):
-        """Start the voice assistant."""
+    def run(self):
+        """Main run loop."""
         print(f"\n{Fore.CYAN}{'='*50}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}Voice Assistant Started{Style.RESET_ALL}")
         print(f"{Fore.CYAN}{'='*50}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}Say '{self.wake_word}' to activate{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}Press Ctrl+C to exit{Style.RESET_ALL}\n")
         
-        self.is_listening = True
-        self.wake_detector.start_listening()
+        self.is_running = True
         
-        # Keep running
+        # Start in wake word mode
+        self.wake_detector.start_listening()
+        print(f"Listening for wake word: '{self.wake_word}'...")
+        
         try:
-            while self.is_listening:
-                time.sleep(0.5)
+            while self.is_running:
+                if self.mode == AssistantMode.WAKE_WORD:
+                    # Just sleep, wake word detector handles detection
+                    time.sleep(0.5)
+                    
+                elif self.mode == AssistantMode.CONVERSATION:
+                    try:
+                        # Wait for transcript with timeout
+                        transcript = self.transcript_queue.get(timeout=1.0)
+                        
+                        # Process the transcript
+                        self.process_transcript(transcript)
+                        
+                    except queue.Empty:
+                        # No transcript received, check for idle timeout
+                        if time.time() - self.last_interaction > self.idle_timeout:
+                            print(f"\n{Fore.YELLOW}Idle timeout reached{Style.RESET_ALL}")
+                            self.exit_conversation_mode()
+                
         except KeyboardInterrupt:
+            pass
+        
+        finally:
             self.stop()
     
     def stop(self):
         """Stop the voice assistant."""
         print(f"\n{Fore.YELLOW}Shutting down...{Style.RESET_ALL}")
         
-        self.is_listening = False
+        self.is_running = False
+        
+        # Stop streaming if active
+        if self.mode == AssistantMode.CONVERSATION:
+            self.transcriber.stop_streaming()
         
         # Clean up components
         if self.wake_detector:
@@ -247,10 +308,8 @@ def main():
     parser.add_argument("--model", help="LLM model name")
     parser.add_argument("--tts", default="pyttsx3", choices=["pyttsx3", "gtts", "system"],
                        help="TTS engine")
-    parser.add_argument("--duration", type=float, default=5.0,
-                       help="Recording duration in seconds")
-    parser.add_argument("--no-streaming", action="store_true",
-                       help="Disable streaming transcription")
+    parser.add_argument("--timeout", type=float, default=10.0,
+                       help="Idle timeout in seconds")
     
     args = parser.parse_args()
     
@@ -282,8 +341,7 @@ def main():
         llm_provider=args.llm,
         llm_model=args.model,
         tts_engine=args.tts,
-        recording_duration=args.duration,
-        use_streaming=not args.no_streaming
+        idle_timeout=args.timeout
     )
     
     # Handle shutdown gracefully
@@ -294,7 +352,7 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     
     # Start assistant
-    assistant.start()
+    assistant.run()
 
 
 if __name__ == "__main__":

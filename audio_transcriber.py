@@ -22,18 +22,14 @@ load_dotenv()
 
 class AudioTranscriber:
     def __init__(self, 
-                 on_transcript: Optional[Callable[[str], None]] = None,
-                 on_final_transcript: Optional[Callable[[str], None]] = None,
-                 sample_rate: int = 16000,
-                 silence_threshold: int = 500):
+                 transcript_queue: Optional[queue.Queue] = None,
+                 sample_rate: int = 16000):
         """
         Initialize real-time audio transcriber with AssemblyAI.
         
         Args:
-            on_transcript: Callback for partial transcripts
-            on_final_transcript: Callback for final transcripts
+            transcript_queue: Queue to send complete transcripts to
             sample_rate: Audio sample rate (16000 or higher recommended)
-            silence_threshold: Silence duration in ms to end turn
         """
         self.api_key = os.getenv("ASSEMBLYAI_API_KEY")
         if not self.api_key:
@@ -41,152 +37,178 @@ class AudioTranscriber:
         
         aai.settings.api_key = self.api_key
         
-        self.on_transcript = on_transcript
-        self.on_final_transcript = on_final_transcript
+        self.transcript_queue = transcript_queue or queue.Queue()
         self.sample_rate = sample_rate
-        self.silence_threshold = silence_threshold
         
-        self.is_recording = False
-        self.audio_queue = queue.Queue()
-        self.transcript_buffer = []
+        # State management
+        self.is_streaming = False
+        self.is_paused = False
         
         # Audio setup
         self.pa = pyaudio.PyAudio()
-        self.audio_stream = None
         
         # Streaming client
         self.streaming_client = None
+        self.streaming_thread = None
         self.session_id = None
+        
+        # Buffer for partial transcripts
+        self.partial_buffer = []
         
     def _create_streaming_client(self):
         """Create AssemblyAI streaming client with event handlers."""
         
         def on_begin(client: StreamingClient, event: BeginEvent):
             self.session_id = event.id
-            print(f"Transcription session started: {event.id}")
+            print(f"✓ Transcription session started")
         
         def on_turn(client: StreamingClient, event: TurnEvent):
             """Handle turn events (complete utterances)."""
             transcript = event.transcript
-            if transcript:
-                self.transcript_buffer.append(transcript)
-                
-                if self.on_transcript:
-                    self.on_transcript(transcript)
-                
-                # Final transcript when turn ends
-                if hasattr(event, 'is_final') and event.is_final:
-                    full_transcript = " ".join(self.transcript_buffer)
-                    if self.on_final_transcript:
-                        self.on_final_transcript(full_transcript)
-                    self.transcript_buffer.clear()
+            
+            # Skip if paused or no transcript
+            if self.is_paused or not transcript:
+                return
+            
+            # Check if this is the end of a turn (complete utterance)
+            if hasattr(event, 'end_of_turn') and event.end_of_turn:
+                # Send complete transcript to queue
+                if self.transcript_queue:
+                    self.transcript_queue.put(transcript)
+                print(f"[Turn Complete] {transcript}")
+            else:
+                # Show partial transcript
+                print(f"[Partial] {transcript}", end="\r")
         
         def on_error(client: StreamingClient, error: StreamingError):
-            print(f"Transcription error: {error}")
+            print(f"❌ Transcription error: {error}")
         
         def on_termination(client: StreamingClient, event: TerminationEvent):
-            print(f"Session terminated: {event.id}")
+            print(f"✓ Session terminated")
         
         # Create client with event handlers
         options = StreamingClientOptions(
-            api_key=self.api_key
+            api_key=self.api_key,
+            api_host="streaming.assemblyai.com"
         )
         
         client = StreamingClient(options)
         
         # Register event handlers
-        client.on(StreamingEvents.BEGIN, on_begin)
-        client.on(StreamingEvents.TURN, on_turn)
-        client.on(StreamingEvents.ERROR, on_error)
-        client.on(StreamingEvents.TERMINATION, on_termination)
+        client.on(StreamingEvents.Begin, on_begin)
+        client.on(StreamingEvents.Turn, on_turn)
+        client.on(StreamingEvents.Error, on_error)
+        client.on(StreamingEvents.Termination, on_termination)
         
         return client
     
-    def start_recording(self, duration: Optional[float] = None):
-        """
-        Start recording and transcribing audio.
-        
-        Args:
-            duration: Optional duration in seconds (None for continuous)
-        """
-        if self.is_recording:
-            print("Already recording")
+    def start_streaming(self):
+        """Start continuous streaming transcription."""
+        if self.is_streaming:
+            print("Already streaming")
             return
         
-        self.is_recording = True
-        self.transcript_buffer.clear()
+        self.is_streaming = True
+        self.is_paused = False
         
         # Create streaming client
         self.streaming_client = self._create_streaming_client()
         
         # Configure streaming parameters
-        params = StreamingSessionParameters(
+        params = StreamingParameters(
             sample_rate=self.sample_rate,
-            encoding="pcm_s16le",
-            min_end_of_turn_silence_when_confident=self.silence_threshold,
-            confidence_threshold=0.8,
-            return_formatted_transcripts=True
+            format_turns=True
         )
         
         # Connect to AssemblyAI
         self.streaming_client.connect(params)
         
-        # Start audio stream
-        self.audio_stream = self.pa.open(
-            rate=self.sample_rate,
-            channels=1,
-            format=pyaudio.paInt16,
-            input=True,
-            frames_per_buffer=1024,
-            stream_callback=self._audio_callback
-        )
+        # Start streaming in a thread
+        self.streaming_thread = threading.Thread(target=self._stream_audio)
+        self.streaming_thread.daemon = True
+        self.streaming_thread.start()
         
-        print("Recording and transcribing...")
-        
-        # Handle duration if specified
-        if duration:
-            threading.Timer(duration, self.stop_recording).start()
+        print("Streaming started")
     
-    def _audio_callback(self, in_data, frame_count, time_info, status):
-        """PyAudio callback to send audio to AssemblyAI."""
-        if self.is_recording and self.streaming_client:
-            try:
-                # Send audio data to AssemblyAI
-                self.streaming_client.send_audio(in_data)
-            except Exception as e:
-                print(f"Error sending audio: {e}")
-        
-        return (None, pyaudio.paContinue)
+    def _stream_audio(self):
+        """Stream audio to AssemblyAI."""
+        try:
+            print("Opening microphone stream...")
+            
+            # Create a generator that respects streaming state
+            def audio_generator():
+                # Calculate buffer size for ~100ms chunks (optimal for AssemblyAI)
+                # At 16kHz, 100ms = 1600 samples
+                buffer_size = 1600
+                
+                stream = self.pa.open(
+                    rate=self.sample_rate,
+                    channels=1,
+                    format=pyaudio.paInt16,
+                    input=True,
+                    frames_per_buffer=buffer_size
+                )
+                
+                try:
+                    while self.is_streaming:
+                        # Read audio chunk (100ms at 16kHz)
+                        audio_data = stream.read(buffer_size, exception_on_overflow=False)
+                        
+                        # Only yield if not paused
+                        if not self.is_paused:
+                            yield audio_data
+                        else:
+                            # Still read to prevent buffer overflow, but don't send
+                            time.sleep(0.01)
+                finally:
+                    stream.stop_stream()
+                    stream.close()
+            
+            # Stream the audio generator
+            self.streaming_client.stream(audio_generator())
+            
+        except Exception as e:
+            print(f"Error in audio streaming: {e}")
+        finally:
+            print("Microphone stream ended")
     
-    def stop_recording(self):
-        """Stop recording and get final transcript."""
-        if not self.is_recording:
-            return None
+    def pause_streaming(self):
+        """Pause streaming (audio still captured but not sent)."""
+        if self.is_streaming:
+            self.is_paused = True
+            print("Streaming paused")
+    
+    def resume_streaming(self):
+        """Resume streaming."""
+        if self.is_streaming:
+            self.is_paused = False
+            print("Streaming resumed")
+    
+    def stop_streaming(self):
+        """Stop streaming completely."""
+        if not self.is_streaming:
+            return
         
-        self.is_recording = False
-        
-        # Stop audio stream
-        if self.audio_stream:
-            self.audio_stream.stop_stream()
-            self.audio_stream.close()
-            self.audio_stream = None
+        self.is_streaming = False
         
         # Disconnect streaming client
         if self.streaming_client:
-            self.streaming_client.disconnect()
+            try:
+                self.streaming_client.disconnect(terminate=True)
+            except Exception as e:
+                print(f"Error disconnecting: {e}")
             self.streaming_client = None
         
-        print("Recording stopped")
+        # Wait for streaming thread to finish
+        if self.streaming_thread:
+            self.streaming_thread.join(timeout=2)
+            self.streaming_thread = None
         
-        # Return accumulated transcript
-        final_transcript = " ".join(self.transcript_buffer)
-        self.transcript_buffer.clear()
-        
-        return final_transcript
+        print("Streaming stopped")
     
     def cleanup(self):
         """Clean up resources."""
-        self.stop_recording()
+        self.stop_streaming()
         
         if self.pa:
             self.pa.terminate()
@@ -200,33 +222,31 @@ class SimpleAudioRecorder:
         Initialize simple audio recorder.
         
         Args:
-            sample_rate: Audio sample rate
+            sample_rate: Audio sample rate (16000 or higher recommended)
         """
-        self.sample_rate = sample_rate
-        self.pa = pyaudio.PyAudio()
-        self.audio_data = []
-        self.is_recording = False
-        
-        # AssemblyAI setup
         self.api_key = os.getenv("ASSEMBLYAI_API_KEY")
-        if self.api_key:
-            aai.settings.api_key = self.api_key
+        if not self.api_key:
+            raise ValueError("ASSEMBLYAI_API_KEY not found in environment")
+        
+        aai.settings.api_key = self.api_key
+        self.sample_rate = sample_rate
+        
+        # Audio setup
+        self.pa = pyaudio.PyAudio()
+        
+        # AssemblyAI transcriber
+        self.transcriber = aai.Transcriber()
     
     def record_audio(self, duration: float = 5.0) -> bytes:
         """
-        Record audio for specified duration.
+        Record audio for a specified duration.
         
         Args:
             duration: Recording duration in seconds
             
         Returns:
-            Recorded audio as bytes
+            Raw audio data as bytes
         """
-        print(f"Recording for {duration} seconds...")
-        
-        self.audio_data = []
-        self.is_recording = True
-        
         stream = self.pa.open(
             rate=self.sample_rate,
             channels=1,
@@ -235,111 +255,52 @@ class SimpleAudioRecorder:
             frames_per_buffer=1024
         )
         
-        # Calculate number of chunks
-        chunks_per_second = self.sample_rate / 1024
-        total_chunks = int(chunks_per_second * duration)
+        print(f"Recording for {duration} seconds...")
+        frames = []
         
-        for _ in range(total_chunks):
-            if not self.is_recording:
-                break
-            data = stream.read(1024, exception_on_overflow=False)
-            self.audio_data.append(data)
+        try:
+            for _ in range(int(self.sample_rate / 1024 * duration)):
+                data = stream.read(1024, exception_on_overflow=False)
+                frames.append(data)
+        finally:
+            stream.stop_stream()
+            stream.close()
         
-        stream.stop_stream()
-        stream.close()
-        
-        print("Recording complete")
-        
-        # Combine audio chunks
-        audio_bytes = b''.join(self.audio_data)
-        return audio_bytes
+        return b''.join(frames)
     
-    def transcribe_audio(self, audio_bytes: bytes) -> str:
+    def transcribe_audio(self, audio_data: bytes) -> str:
         """
-        Transcribe audio using AssemblyAI (post-processing).
+        Transcribe audio data using AssemblyAI.
         
         Args:
-            audio_bytes: Audio data as bytes
+            audio_data: Raw audio data
             
         Returns:
             Transcribed text
         """
-        if not self.api_key:
-            return "No API key configured for transcription"
-        
-        # Save audio to temporary file
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-            import wave
+        try:
+            # Create config for transcription
+            config = aai.TranscriptionConfig(
+                sample_rate=self.sample_rate,
+            )
             
-            # Write WAV file
-            with wave.open(tmp_file.name, 'wb') as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)  # 16-bit
-                wav_file.setframerate(self.sample_rate)
-                wav_file.writeframes(audio_bytes)
-            
-            # Transcribe using AssemblyAI
-            transcriber = aai.Transcriber()
-            transcript = transcriber.transcribe(tmp_file.name)
-            
-            # Clean up temp file
-            os.unlink(tmp_file.name)
+            # Transcribe the audio
+            transcript = self.transcriber.transcribe(
+                audio_data,
+                config=config
+            )
             
             if transcript.status == aai.TranscriptStatus.error:
-                return f"Transcription error: {transcript.error}"
+                print(f"Transcription error: {transcript.error}")
+                return ""
             
-            return transcript.text or "No speech detected"
+            return transcript.text or ""
+            
+        except Exception as e:
+            print(f"Transcription error: {e}")
+            return ""
     
     def cleanup(self):
         """Clean up resources."""
-        self.is_recording = False
         if self.pa:
             self.pa.terminate()
-
-
-if __name__ == "__main__":
-    # Example 1: Real-time streaming transcription
-    print("Example 1: Real-time streaming transcription")
-    print("-" * 50)
-    
-    def on_partial_transcript(text):
-        print(f"Partial: {text}")
-    
-    def on_final_transcript(text):
-        print(f"Final: {text}")
-    
-    transcriber = AudioTranscriber(
-        on_transcript=on_partial_transcript,
-        on_final_transcript=on_final_transcript
-    )
-    
-    try:
-        transcriber.start_recording(duration=10)  # Record for 10 seconds
-        time.sleep(11)  # Wait for recording to complete
-    except KeyboardInterrupt:
-        print("\nStopping...")
-    finally:
-        transcriber.cleanup()
-    
-    print("\n" + "=" * 50 + "\n")
-    
-    # Example 2: Simple recording with post-transcription
-    print("Example 2: Simple recording with post-transcription")
-    print("-" * 50)
-    
-    recorder = SimpleAudioRecorder()
-    
-    try:
-        # Record audio
-        audio_data = recorder.record_audio(duration=5)
-        
-        # Transcribe
-        print("Transcribing...")
-        transcript = recorder.transcribe_audio(audio_data)
-        print(f"Transcript: {transcript}")
-        
-    except KeyboardInterrupt:
-        print("\nStopping...")
-    finally:
-        recorder.cleanup()

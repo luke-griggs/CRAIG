@@ -32,7 +32,7 @@ class TTSEngine(ABC):
 class Pyttsx3Engine(TTSEngine):
     """Text-to-speech engine using pyttsx3 (offline)."""
     
-    def __init__(self, voice_index: int = 0, rate: int = 180):
+    def __init__(self, voice_index: int = 0, rate: int = 200):
         """
         Initialize pyttsx3 TTS engine.
         

@@ -120,9 +120,11 @@ class WakeWordDetector:
             self.audio_stream.close()
             self.audio_stream = None
         
-        # Wait for detection thread to finish
+        # Wait for detection thread to finish (only if not in current thread)
         if hasattr(self, 'detection_thread'):
-            self.detection_thread.join(timeout=2)
+            import threading
+            if threading.current_thread() != self.detection_thread:
+                self.detection_thread.join(timeout=2)
     
     def cleanup(self):
         """Clean up resources."""
