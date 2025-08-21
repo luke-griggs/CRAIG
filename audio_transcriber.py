@@ -208,10 +208,17 @@ class AudioTranscriber:
     
     def cleanup(self):
         """Clean up resources."""
-        self.stop_streaming()
+        try:
+            self.stop_streaming()
+        except Exception as e:
+            print(f"Error stopping streaming during cleanup: {e}")
         
-        if self.pa:
-            self.pa.terminate()
+        try:
+            if self.pa:
+                self.pa.terminate()
+                self.pa = None
+        except Exception as e:
+            print(f"Error terminating PyAudio: {e}")
 
 
 class SimpleAudioRecorder:

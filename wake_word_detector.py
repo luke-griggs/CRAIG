@@ -128,13 +128,24 @@ class WakeWordDetector:
     
     def cleanup(self):
         """Clean up resources."""
-        self.stop_listening()
+        try:
+            self.stop_listening()
+        except Exception as e:
+            print(f"Error stopping wake word detection: {e}")
         
-        if self.porcupine:
-            self.porcupine.delete()
+        try:
+            if self.porcupine:
+                self.porcupine.delete()
+                self.porcupine = None
+        except Exception as e:
+            print(f"Error cleaning up Porcupine: {e}")
         
-        if self.pa:
-            self.pa.terminate()
+        try:
+            if self.pa:
+                self.pa.terminate()
+                self.pa = None
+        except Exception as e:
+            print(f"Error terminating PyAudio: {e}")
 
 
 class OpenWakeWordDetector:
@@ -220,10 +231,17 @@ class OpenWakeWordDetector:
     
     def cleanup(self):
         """Clean up resources."""
-        self.stop_listening()
+        try:
+            self.stop_listening()
+        except Exception as e:
+            print(f"Error stopping wake word detection: {e}")
         
-        if self.pa:
-            self.pa.terminate()
+        try:
+            if self.pa:
+                self.pa.terminate()
+                self.pa = None
+        except Exception as e:
+            print(f"Error terminating PyAudio: {e}")
 
 
 if __name__ == "__main__":

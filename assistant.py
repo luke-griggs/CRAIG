@@ -243,7 +243,6 @@ class VoiceAssistant:
         
         # Start in wake word mode
         self.wake_detector.start_listening()
-        print(f"Listening for wake word: '{self.wake_word}'...")
         
         try:
             while self.is_running:
@@ -273,23 +272,41 @@ class VoiceAssistant:
     
     def stop(self):
         """Stop the voice assistant."""
+        if not self.is_running:
+            return  # Already stopped
+            
         print(f"\n{Fore.YELLOW}Shutting down...{Style.RESET_ALL}")
         
         self.is_running = False
         
         # Stop streaming if active
         if self.mode == AssistantMode.CONVERSATION:
-            self.transcriber.stop_streaming()
+            try:
+                self.transcriber.stop_streaming()
+            except Exception as e:
+                print(f"Error stopping transcriber: {e}")
         
         # Clean up components
-        if self.wake_detector:
-            self.wake_detector.cleanup()
+        try:
+            if self.wake_detector:
+                self.wake_detector.cleanup()
+                self.wake_detector = None
+        except Exception as e:
+            print(f"Error cleaning up wake detector: {e}")
         
-        if self.transcriber:
-            self.transcriber.cleanup()
+        try:
+            if self.transcriber:
+                self.transcriber.cleanup()
+                self.transcriber = None
+        except Exception as e:
+            print(f"Error cleaning up transcriber: {e}")
         
-        if self.tts:
-            self.tts.stop()
+        try:
+            if self.tts:
+                self.tts.stop()
+                self.tts = None
+        except Exception as e:
+            print(f"Error stopping TTS: {e}")
         
         print(f"{Fore.GREEN}Goodbye!{Style.RESET_ALL}")
 
