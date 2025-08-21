@@ -36,7 +36,7 @@ class VoiceAssistant:
                  use_porcupine: bool = True,
                  llm_provider: str = "openai",
                  llm_model: Optional[str] = None,
-                 tts_engine: str = "pyttsx3",
+                 voice_id: str = "L0Dsvb3SLTyegXwtm47J",
                  idle_timeout: float = 10.0):
         """
         Initialize Voice Assistant with conversation mode.
@@ -46,7 +46,7 @@ class VoiceAssistant:
             use_porcupine: Use Porcupine (True) or OpenWakeWord (False)
             llm_provider: LLM provider ("openai" or "anthropic")
             llm_model: Optional model override
-            tts_engine: TTS engine ("pyttsx3", "gtts", "system")
+            voice_id: ElevenLabs voice ID
             idle_timeout: Seconds of silence before returning to wake word mode
         """
         print(f"{Fore.CYAN}Initializing Voice Assistant...{Style.RESET_ALL}")
@@ -66,7 +66,7 @@ class VoiceAssistant:
         self._init_wake_word_detector(use_porcupine)
         self._init_transcriber()
         self._init_llm(llm_provider, llm_model)
-        self._init_tts(tts_engine)
+        self._init_tts(voice_id)
         
         # Streaming thread (will be created when entering conversation mode)
         self.streaming_thread = None
@@ -129,15 +129,14 @@ class VoiceAssistant:
             print(f"{Fore.RED}✗ LLM error: {e}{Style.RESET_ALL}")
             raise
     
-    def _init_tts(self, engine: str):
+    def _init_tts(self, voice_id: str):
         """Initialize TTS engine."""
         try:
-            self.tts = TTSManager(engine=engine)
-            print(f"{Fore.GREEN}✓ TTS engine ready ({engine}){Style.RESET_ALL}")
+            self.tts = TTSManager(voice_id=voice_id)
+            print(f"{Fore.GREEN}✓ TTS engine ready (ElevenLabs){Style.RESET_ALL}")
         except Exception as e:
             print(f"{Fore.RED}✗ TTS error: {e}{Style.RESET_ALL}")
-            # Fallback to system TTS
-            self.tts = TTSManager(engine="system")
+            raise
     
     def on_wake_word_detected(self):
         """Callback when wake word is detected."""
@@ -156,6 +155,9 @@ class VoiceAssistant:
         """Enter conversation mode and start streaming."""
         # Mode already set in on_wake_word_detected
         self.last_interaction = time.time()
+        
+        # Clear previous conversation history for fresh session
+        self.llm.clear_history()
         
         # Stop wake word detection
         self.wake_detector.stop_listening()
@@ -182,6 +184,10 @@ class VoiceAssistant:
                 self.transcript_queue.get_nowait()
             except queue.Empty:
                 break
+        
+        # Clear conversation history
+        self.llm.clear_history()
+        print(f"{Fore.YELLOW}Conversation history cleared{Style.RESET_ALL}")
         
         # Say goodbye
         self.tts.speak("Going back to sleep", blocking=True)
@@ -303,7 +309,7 @@ class VoiceAssistant:
         
         try:
             if self.tts:
-                self.tts.stop()
+                self.tts.cleanup()
                 self.tts = None
         except Exception as e:
             print(f"Error stopping TTS: {e}")
@@ -323,8 +329,8 @@ def main():
     parser.add_argument("--llm", default="openai", choices=["openai", "anthropic"],
                        help="LLM provider")
     parser.add_argument("--model", help="LLM model name")
-    parser.add_argument("--tts", default="pyttsx3", choices=["pyttsx3", "gtts", "system"],
-                       help="TTS engine")
+    parser.add_argument("--voice", default="L0Dsvb3SLTyegXwtm47J",
+                       help="ElevenLabs voice ID")
     parser.add_argument("--timeout", type=float, default=10.0,
                        help="Idle timeout in seconds")
     
@@ -346,6 +352,11 @@ def main():
         print("Please set your AssemblyAI API key in .env file")
         sys.exit(1)
     
+    if not os.getenv("ELEVEN_LABS_KEY"):
+        print(f"{Fore.RED}Error: ELEVEN_LABS_KEY not found in environment{Style.RESET_ALL}")
+        print("Please set your ElevenLabs API key in .env file")
+        sys.exit(1)
+    
     if not args.no_porcupine and not os.getenv("PICOVOICE_ACCESS_KEY"):
         print(f"{Fore.YELLOW}Warning: PICOVOICE_ACCESS_KEY not found{Style.RESET_ALL}")
         print("Falling back to OpenWakeWord")
@@ -357,7 +368,7 @@ def main():
         use_porcupine=not args.no_porcupine,
         llm_provider=args.llm,
         llm_model=args.model,
-        tts_engine=args.tts,
+        voice_id=args.voice,
         idle_timeout=args.timeout
     )
     
