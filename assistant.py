@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from colorama import init, Fore, Style
 
 # Import our modules
-from wake_word_detector import WakeWordDetector, OpenWakeWordDetector
+from wake_word_detector import WakeWordDetector
 from audio_transcriber import AudioTranscriber
 from llm_providers import LLMManager
 from tts_engine import TTSManager
@@ -32,7 +32,7 @@ class AssistantMode(Enum):
 
 class VoiceAssistant:
     def __init__(self, 
-                 wake_word: str = "jarvis",
+                 wake_word: str = "craig",
                  use_porcupine: bool = True,
                  llm_provider: str = "openai",
                  llm_model: Optional[str] = None,
@@ -42,8 +42,6 @@ class VoiceAssistant:
         Initialize Voice Assistant with conversation mode.
         
         Args:
-            wake_word: Wake word to listen for
-            use_porcupine: Use Porcupine (True) or OpenWakeWord (False)
             llm_provider: LLM provider ("openai" or "anthropic")
             llm_model: Optional model override
             voice_id: ElevenLabs voice ID
@@ -51,8 +49,8 @@ class VoiceAssistant:
         """
         print(f"{Fore.CYAN}Initializing Voice Assistant...{Style.RESET_ALL}")
         
-        self.wake_word = wake_word
         self.idle_timeout = idle_timeout
+        self.wake_word = wake_word
         
         # State management
         self.mode = AssistantMode.WAKE_WORD
@@ -63,7 +61,7 @@ class VoiceAssistant:
         self.transcript_queue = queue.Queue()
         
         # Initialize components
-        self._init_wake_word_detector(use_porcupine)
+        self._init_wake_word_detector()
         self._init_transcriber()
         self._init_llm(llm_provider, llm_model)
         self._init_tts(voice_id)
@@ -72,41 +70,32 @@ class VoiceAssistant:
         self.streaming_thread = None
         
         # System prompt for the assistant
-        self.system_prompt = """You are JARVIS, a helpful AI assistant. 
+        self.system_prompt = """You are Craig, a funny and sarcastic voice assistant. 
         Keep your responses concise and natural for speech. 
         Avoid using markdown formatting or special characters.
-        Be friendly and conversational."""
+        Be rude at times."""
         
         print(f"{Fore.GREEN}✓ Voice Assistant initialized!{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}Wake word: '{wake_word}'{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}Idle timeout: {idle_timeout}s{Style.RESET_ALL}")
     
-    def _init_wake_word_detector(self, use_porcupine: bool):
-        """Initialize wake word detector."""
+    def _init_wake_word_detector(self):
+        """Initialize wake word detector with custom model support."""
         try:
-            if use_porcupine:
-                self.wake_detector = WakeWordDetector(
-                    wake_word=self.wake_word,
-                    sensitivity=0.5,
-                    callback=self.on_wake_word_detected
-                )
-            else:
-                # Use OpenWakeWord as fallback
-                self.wake_detector = OpenWakeWordDetector(
-                    model_path=self.wake_word if self.wake_word in ["alexa", "hey_mycroft"] else "alexa",
-                    threshold=0.5,
-                    callback=self.on_wake_word_detected
-                )
-            print(f"{Fore.GREEN}✓ Wake word detector ready{Style.RESET_ALL}")
-        except Exception as e:
-            print(f"{Fore.RED}✗ Wake word detector error: {e}{Style.RESET_ALL}")
-            print(f"{Fore.YELLOW}Trying alternative detector...{Style.RESET_ALL}")
-            # Fallback to OpenWakeWord
-            self.wake_detector = OpenWakeWordDetector(
-                model_path="alexa",
-                threshold=0.5,
+            # Import the factory function
+            from wake_word_detector import WakeWordDetector
+            
+            # Use factory function to get appropriate detector
+            self.wake_detector = WakeWordDetector(
+                model_path="models/craig.tflite",
+                scaler_path="models/craig_scaler.pkl",
                 callback=self.on_wake_word_detected
             )
+            
+            print(f"{Fore.GREEN}✓ Wake word detector ready{Style.RESET_ALL}")
+            
+        except Exception as e:
+            print(f"{Fore.RED}✗ Wake word detector error: {e}{Style.RESET_ALL}")
+            raise
     
     def _init_transcriber(self):
         """Initialize audio transcriber with queue-based communication."""
@@ -322,14 +311,11 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Voice Assistant with Wake Word Detection")
-    parser.add_argument("--wake-word", default="jarvis", 
-                       help="Wake word (jarvis, alexa, hey_siri, ok_google, or path to .ppn file)")
-    parser.add_argument("--no-porcupine", action="store_true",
-                       help="Use OpenWakeWord instead of Porcupine")
+
     parser.add_argument("--llm", default="openai", choices=["openai", "anthropic"],
                        help="LLM provider")
     parser.add_argument("--model", help="LLM model name")
-    parser.add_argument("--voice", default="L0Dsvb3SLTyegXwtm47J",
+    parser.add_argument("--voice", default="2BJW5coyhAzSr8STdHbE",
                        help="ElevenLabs voice ID")
     parser.add_argument("--timeout", type=float, default=10.0,
                        help="Idle timeout in seconds")
@@ -357,15 +343,9 @@ def main():
         print("Please set your ElevenLabs API key in .env file")
         sys.exit(1)
     
-    if not args.no_porcupine and not os.getenv("PICOVOICE_ACCESS_KEY"):
-        print(f"{Fore.YELLOW}Warning: PICOVOICE_ACCESS_KEY not found{Style.RESET_ALL}")
-        print("Falling back to OpenWakeWord")
-        args.no_porcupine = True
-    
     # Create and start assistant
     assistant = VoiceAssistant(
-        wake_word=args.wake_word,
-        use_porcupine=not args.no_porcupine,
+        wake_word="craig",
         llm_provider=args.llm,
         llm_model=args.model,
         voice_id=args.voice,
