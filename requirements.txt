@@ -1,24 +1,40 @@
-# Core dependencies
-assemblyai[extras]>=0.34.0
-pvporcupine>=3.0.5
-pyaudio>=0.2.11
-python-dotenv>=1.0.0
-requests>=2.31.0
+########################################
+# Environment & Utilities
+########################################
+python-dotenv
+colorama
+requests
 
-# Alternative wake word detection
-openwakeword>=0.6.0
+########################################
+# LLM Providers
+########################################
+openai
+anthropic
+groq
 
-# Model providers
-openai>=1.0.0
-anthropic>=0.34.0
+########################################
+# Transcription (AssemblyAI) + Microphone
+########################################
+assemblyai[extras]
+pyaudio
 
-# Text-to-speech
-pyttsx3>=2.90
-# Alternative: gTTS>=2.5.0
+########################################
+# TTS Playback
+########################################
+pygame
 
-# Audio processing
-numpy>=1.24.0
-sounddevice>=0.4.6
+########################################
+# Wake Word & Audio Processing
+########################################
+pvporcupine
+numpy
+librosa
+scikit-learn
+joblib
 
-# Utilities
-colorama>=0.4.6
+########################################
+# TensorFlow Lite (TF interpreter used in wake_word_detector)
+# Use platform-appropriate TensorFlow package
+########################################
+tensorflow-macos; platform_system == "Darwin"
+tensorflow; platform_system != "Darwin"

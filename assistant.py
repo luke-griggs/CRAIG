@@ -72,8 +72,7 @@ class VoiceAssistant:
         # System prompt for the assistant
         self.system_prompt = """You are Craig, a funny and sarcastic voice assistant. 
         Keep your responses concise and natural for speech. 
-        Avoid using markdown formatting or special characters.
-        Be rude at times."""
+        Avoid using markdown formatting or special characters"""
         
         print(f"{Fore.GREEN}✓ Voice Assistant initialized!{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}Idle timeout: {idle_timeout}s{Style.RESET_ALL}")
@@ -145,15 +144,14 @@ class VoiceAssistant:
         # Mode already set in on_wake_word_detected
         self.last_interaction = time.time()
         
-        # Clear previous conversation history for fresh session
-        self.llm.clear_history()
+        # Conversation history persists across wake/sleep cycles
         
         # Stop wake word detection
         self.wake_detector.stop_listening()
         
         # Acknowledge activation
         print(f"{Fore.YELLOW}Entering conversation mode...{Style.RESET_ALL}")
-        self.tts.speak("Yes?", blocking=True)
+        self.tts.speak("What's up?", blocking=True)
         
         # Start streaming transcription
         self.transcriber.start_streaming()
@@ -174,12 +172,8 @@ class VoiceAssistant:
             except queue.Empty:
                 break
         
-        # Clear conversation history
-        self.llm.clear_history()
-        print(f"{Fore.YELLOW}Conversation history cleared{Style.RESET_ALL}")
-        
-        # Say goodbye
-        self.tts.speak("Going back to sleep", blocking=True)
+        # Conversation history is preserved across wake/sleep cycles
+        print(f"{Fore.YELLOW}Conversation mode exited, history preserved{Style.RESET_ALL}")
         
         # Return to wake word mode
         self.mode = AssistantMode.WAKE_WORD
@@ -196,6 +190,21 @@ class VoiceAssistant:
         # Check for exit commands
         if transcript.lower() in ["goodbye", "bye", "exit", "stop", "go to sleep"]:
             self.exit_conversation_mode()
+            return
+
+        # Check for clear history commands
+        if transcript.lower() in ["clear history", "forget everything", "reset memory", "wipe memory"]:
+            self.llm.clear_history()
+            self.tts.speak("Conversation history cleared. Starting fresh!", blocking=True)
+            return
+
+        # Check for history status commands
+        if transcript.lower() in ["how many conversations", "conversation count", "history length"]:
+            history_length = self.llm.get_history_length()
+            if history_length == 0:
+                self.tts.speak("No conversation history yet.", blocking=True)
+            else:
+                self.tts.speak(f"We've had {history_length // 2} exchanges in our conversation.", blocking=True)
             return
         
         # Pause streaming during response
@@ -312,7 +321,7 @@ def main():
     
     parser = argparse.ArgumentParser(description="Voice Assistant with Wake Word Detection")
 
-    parser.add_argument("--llm", default="openai", choices=["openai", "anthropic"],
+    parser.add_argument("--llm", default="groq", choices=["openai", "anthropic", "groq"],
                        help="LLM provider")
     parser.add_argument("--model", help="LLM model name")
     parser.add_argument("--voice", default="2BJW5coyhAzSr8STdHbE",
@@ -327,10 +336,15 @@ def main():
         print(f"{Fore.RED}Error: OPENAI_API_KEY not found in environment{Style.RESET_ALL}")
         print("Please set your OpenAI API key in .env file")
         sys.exit(1)
-    
+
     if args.llm == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
         print(f"{Fore.RED}Error: ANTHROPIC_API_KEY not found in environment{Style.RESET_ALL}")
         print("Please set your Anthropic API key in .env file")
+        sys.exit(1)
+
+    if args.llm == "groq" and not os.getenv("GROQ_API_KEY"):
+        print(f"{Fore.RED}Error: GROQ_API_KEY not found in environment{Style.RESET_ALL}")
+        print("Please set your Groq API key in .env file")
         sys.exit(1)
     
     if not os.getenv("ASSEMBLYAI_API_KEY"):
