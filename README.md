@@ -1,29 +1,46 @@
-# C.R.A.I.G (Conversational Room Assistant & Intelligence Gateway)
+# Craig - Voice Assistant
 
-A Python-based voice assistant that uses wake word detection, real-time speech transcription (AssemblyAI), LLM processing (OpenAI/Anthropic), and text-to-speech output.
+A witty, sarcastic voice assistant with custom wake word detection, real-time speech transcription (AssemblyAI), LLM processing (OpenAI/Anthropic/Groq), and high-quality text-to-speech (ElevenLabs). Features conversation mode with idle timeout and persistent memory.
 
 ## Features
 
-- **Wake Word Detection**: Supports both Picovoice Porcupine and OpenWakeWord
-- **Real-time Transcription**: Uses AssemblyAI's streaming API for low-latency transcription
-- **Multiple LLM Providers**: OpenAI GPT and Anthropic Claude support
-- **Text-to-Speech**: Multiple TTS engines (pyttsx3, gTTS, system TTS)
+- **Custom Wake Word Detection**: Trained TensorFlow Lite model specifically for "Craig" wake word
+- **Conversation Mode**: Seamless conversation flow with configurable idle timeout
+- **Real-time Transcription**: AssemblyAI's streaming API for low-latency speech recognition
+- **Multiple LLM Providers**: OpenAI GPT, Anthropic Claude, and Groq support with conversation history
+- **High-Quality TTS**: ElevenLabs voices with natural speech synthesis
+- **Personality**: Witty, sarcastic personality with persistent conversation memory
 - **Cross-platform**: Works on macOS, Linux, and Raspberry Pi
 
 ## Architecture
 
+Craig operates in two main modes with seamless transitions:
+
 ```
-Wake Word Detection → Audio Recording → Speech Transcription → LLM Processing → TTS Output
+┌─────────────────┐     Wake Word     ┌──────────────────┐
+│   Wake Word     │ ────────────────► │  Conversation    │
+│   Detection     │                   │     Mode         │
+│   (Sleeping)    │ ◄───────────────  │   (Active)       │
+└─────────────────┘   Idle Timeout    └──────────────────┘
+         ▲                                         │
+         │                                         │
+         └─────────────────────────────────────────┘
+                 Persistent Conversation History
 ```
+
+**Wake Word Mode**: Listens for "Craig" wake word using custom TensorFlow Lite model
+**Conversation Mode**: Real-time speech transcription → LLM processing → ElevenLabs TTS
 
 ## Prerequisites
 
 ### macOS
+
 ```bash
 brew install portaudio
 ```
 
 ### Linux/Raspberry Pi
+
 ```bash
 sudo apt-get install portaudio19-dev
 sudo apt-get install espeak  # Optional: for system TTS
@@ -32,135 +49,157 @@ sudo apt-get install espeak  # Optional: for system TTS
 ## Installation
 
 1. Clone the repository:
+
 ```bash
 git clone <your-repo>
-cd max
+cd craig
 ```
 
 2. Install dependencies:
+
 ```bash
 pip install -r requirements.txt
 ```
 
 3. Set up API keys:
+
 ```bash
 cp .env.example .env
 # Edit .env with your API keys
 ```
 
 Required API keys:
+
 - `ASSEMBLYAI_API_KEY`: For speech transcription (get from https://www.assemblyai.com)
-- `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`: For LLM responses
-- `PICOVOICE_ACCESS_KEY`: Optional, for Porcupine wake word (get from https://picovoice.ai)
+- `ELEVEN_LABS_KEY`: For high-quality text-to-speech (get from https://elevenlabs.io)
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GROQ_API_KEY`: For LLM responses
+  - OpenAI: https://platform.openai.com/api-keys
+  - Anthropic: https://console.anthropic.com/
+  - Groq: https://console.groq.com/keys
 
 ## Usage
 
 ### Basic Usage
+
 ```bash
-python voice_assistant.py
+python assistant.py
 ```
 
 ### Command Line Options
+
 ```bash
-# Use different wake word
-python voice_assistant.py --wake-word alexa
+# Use different LLM provider (default: groq)
+python assistant.py --llm openai --model gpt-4o
 
-# Use OpenWakeWord instead of Porcupine
-python voice_assistant.py --no-porcupine
+# Use Anthropic Claude
+python assistant.py --llm anthropic --model claude-3-5-haiku-20241022
 
-# Use Anthropic Claude instead of OpenAI
-python voice_assistant.py --llm anthropic --model claude-3-5-haiku-20241022
+# Use different ElevenLabs voice
+python assistant.py --voice L0Dsvb3SLTyegXwtm47J
 
-# Use system TTS
-python voice_assistant.py --tts system
-
-# Adjust recording duration
-python voice_assistant.py --duration 10
-
-# Disable streaming transcription
-python voice_assistant.py --no-streaming
+# Adjust idle timeout before returning to wake word mode
+python assistant.py --timeout 15
 ```
 
-### Available Wake Words (Porcupine)
-- jarvis
-- alexa
-- hey_siri
-- ok_google
-- Custom .ppn files
+### Wake Word
 
-### Available Wake Words (OpenWakeWord)
-- alexa
-- hey_mycroft
-- Custom models
+Craig uses a custom-trained TensorFlow Lite model specifically for the wake word "Craig". The model files are located in the `models/` directory:
+
+- `craig.tflite`: The trained model
+- `craig_scaler.pkl`: Feature scaler used during training
+
+### Conversation Commands
+
+While in conversation mode, you can use these commands:
+
+- "goodbye", "bye", "exit", "stop", "go to sleep" - Exit conversation mode
+- "clear history", "forget everything", "reset memory", "wipe memory" - Clear conversation history
+- "how many conversations", "conversation count", "history length" - Check conversation history length
 
 ## Module Descriptions
 
+### `assistant.py`
+
+Main voice assistant implementation featuring conversation mode with idle timeout. Manages state transitions between wake word detection and conversation modes, maintains persistent conversation history, and coordinates all components.
+
 ### `wake_word_detector.py`
-Implements wake word detection using either Picovoice Porcupine (commercial, high accuracy) or OpenWakeWord (open-source, no API key required).
+
+Custom wake word detector using TensorFlow Lite models. Trained specifically for "Craig" wake word detection with real-time audio processing and configurable sensitivity thresholds.
 
 ### `audio_transcriber.py`
-Handles audio recording and transcription using AssemblyAI's streaming API. Supports both real-time streaming and post-processing modes.
+
+Handles real-time audio recording and speech transcription using AssemblyAI's streaming API. Features queue-based communication for seamless integration with conversation flow and supports pause/resume functionality.
 
 ### `llm_providers.py`
-Manages LLM interactions with support for OpenAI GPT and Anthropic Claude. Maintains conversation history and supports streaming responses.
+
+LLM management system supporting OpenAI GPT, Anthropic Claude, and Groq providers. Maintains persistent conversation history with pickle-based storage, supports streaming responses, and includes abstract provider architecture.
 
 ### `tts_engine.py`
-Provides text-to-speech functionality with multiple engine options:
-- pyttsx3: Offline, cross-platform
-- gTTS: Google TTS, requires internet
-- System: Uses OS-native TTS commands
 
-### `voice_assistant.py`
-Main integration that combines all modules into a complete voice assistant.
+ElevenLabs-powered text-to-speech engine with high-quality voice synthesis. Features asynchronous speech generation, pygame-based audio playback, and support for multiple ElevenLabs voice models.
 
 ## Raspberry Pi Considerations
 
-1. **Performance**: Use lighter models (gpt-4o-mini, claude-3-5-haiku) for better performance
-2. **Audio Setup**: Ensure your microphone is properly configured:
+1. **Performance**: Use Groq or lighter models (claude-3-5-haiku, gpt-4o-mini) for best performance on Pi hardware
+2. **Hardware**: Raspberry Pi 4 or 5 recommended for TensorFlow Lite inference
+3. **Audio Setup**: Ensure your microphone is properly configured:
    ```bash
    # Test microphone
    arecord -l  # List recording devices
    arecord -D plughw:1,0 -d 5 test.wav  # Test recording
    ```
-3. **Wake Word**: OpenWakeWord may perform better than Porcupine on lower-end Pi models
-4. **TTS**: Use pyttsx3 or espeak for better performance
+4. **Wake Word**: Custom TensorFlow Lite model is optimized but may require Pi 4+ for real-time performance
+5. **TTS**: ElevenLabs works well on Pi with good internet connection; responses are processed server-side
 
 ## Troubleshooting
 
 ### No Audio Input
+
 - Check microphone permissions
 - Verify PyAudio installation: `python -c "import pyaudio"`
 - Test with system tools: `arecord` (Linux) or Audio MIDI Setup (macOS)
 
 ### API Key Errors
+
 - Ensure all required keys are in `.env` file
 - Check API key validity and quota limits
 
 ### Wake Word Not Detected
-- Adjust sensitivity in code (0.0-1.0)
-- Try different wake words
-- Check microphone quality and positioning
 
-### TTS Not Working
-- Install system TTS: `apt-get install espeak` (Linux)
-- Try different engines: `--tts system` or `--tts gtts`
+- Ensure model files exist: `models/craig.tflite` and `models/craig_scaler.pkl`
+- Adjust threshold in `wake_word_detector.py` (default: 0.520)
+- Retrain model if accuracy is poor (see training notebook)
+- Check microphone quality and positioning
+- Ensure TensorFlow Lite is properly installed
+
+### ElevenLabs TTS Not Working
+
+- Check `ELEVEN_LABS_KEY` in `.env` file
+- Verify internet connection (ElevenLabs requires online access)
+- Ensure pygame is installed: `pip install pygame`
+- Try different voice IDs from ElevenLabs dashboard
 
 ## Performance Optimization
 
 1. **Reduce Latency**:
-   - Use streaming transcription
-   - Choose faster LLM models
-   - Use local TTS (pyttsx3)
+
+   - Use Groq for fastest LLM responses (default)
+   - Use lighter models: `claude-3-5-haiku` or `gpt-4o-mini`
+   - Keep conversation responses concise (Craig's personality helps with this)
+   - Adjust idle timeout based on your usage patterns
 
 2. **Reduce Resource Usage**:
-   - Lower audio sample rate (minimum 16kHz)
-   - Use shorter recording durations
-   - Disable streaming for lower CPU usage
+
+   - TensorFlow Lite model is optimized for edge devices
+   - AssemblyAI streaming uses minimal CPU when idle
+   - ElevenLabs TTS requires internet but processes quickly
+   - Use appropriate hardware (Raspberry Pi 4+ recommended)
 
 3. **Improve Accuracy**:
-   - Use high-quality microphone
-   - Reduce background noise
-   - Adjust wake word sensitivity
+   - Use high-quality microphone with good noise isolation
+   - Position microphone appropriately for wake word detection
+   - Retrain wake word model if false positives/negatives occur
+   - Ensure consistent audio levels and background noise
 
 ## Future Enhancements
 
