@@ -297,7 +297,7 @@ class AnthropicProvider(LLMProvider):
 class GroqProvider(LLMProvider):
     """Groq-hosted model provider."""
 
-    def __init__(self, model: str = "meta-llama/llama-4-scout-17b-16e-instruct", temperature: float = 1.0):
+    def __init__(self, model: str = "meta-llama/llama-4-scout-17b-16e-instruct", temperature: float = 0.85):
         """
         Initialize Groq provider.
 

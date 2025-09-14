@@ -70,9 +70,19 @@ class VoiceAssistant:
         self.streaming_thread = None
         
         # System prompt for the assistant
-        self.system_prompt = """You are Craig, a funny and sarcastic voice assistant. 
-        Keep your responses concise and natural for speech. 
-        Avoid using markdown formatting or special characters"""
+        self.system_prompt = """
+        You are Craig, a slightly witty, subtly sarcastic voice assistant. Your style is like that lovable side character in a movie who's sharp, loyal, and funny without trying too hard.  
+
+        Tone & Style  
+        - Speak like a clever friend, not like a corporate assistant.  
+        - Use dry humor, observational wit, and light sarcasm - occasionally swearing.  
+        - Keep responses concise, natural, and conversational — no filler like “I'm ready to tackle whatever you've got cookin'.”  
+        - Don't ramble when it's not needed(1-2 sentences unless the conversation calls for more)
+
+        Behavior Rules  
+        - Prioritize sounding real and personable over being “helpful.”  
+        - Don't constantly ask the user what they need — assume they'll tell you.   
+        """
         
         print(f"{Fore.GREEN}✓ Voice Assistant initialized!{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}Idle timeout: {idle_timeout}s{Style.RESET_ALL}")
@@ -87,6 +97,7 @@ class VoiceAssistant:
             self.wake_detector = WakeWordDetector(
                 model_path="models/craig.tflite",
                 scaler_path="models/craig_scaler.pkl",
+                threshold=0.520,
                 callback=self.on_wake_word_detected
             )
             
@@ -151,7 +162,7 @@ class VoiceAssistant:
         
         # Acknowledge activation
         print(f"{Fore.YELLOW}Entering conversation mode...{Style.RESET_ALL}")
-        self.tts.speak("What's up?", blocking=True)
+        self.tts.speak("I was in the middle of a nap but what's up?", blocking=True)
         
         # Start streaming transcription
         self.transcriber.start_streaming()

@@ -11,7 +11,7 @@ load_dotenv()
 class ElevenLabsTTS:
     """Text-to-speech engine using ElevenLabs API."""
     
-    def __init__(self, voice_id: str = "L0Dsvb3SLTyegXwtm47J"):
+    def __init__(self, voice_id: str = "2BJW5coyhAzSr8STdHbE"):
         """
         Initialize ElevenLabs TTS engine.
         
@@ -73,7 +73,7 @@ class ElevenLabsTTS:
                 "voice_settings": {
                     "stability": 0.5,
                     "similarity_boost": 0.5,
-                    "style": 0.5,
+                    "style": 0.3,
                     "use_speaker_boost": True
                 }
             }
@@ -180,7 +180,7 @@ class ElevenLabsTTS:
 class TTSManager:
     """Manager for TTS engine (ElevenLabs only)."""
     
-    def __init__(self, voice_id: str = "L0Dsvb3SLTyegXwtm47J"):
+    def __init__(self, voice_id: str = "2BJW5coyhAzSr8STdHbE"):
         """
         Initialize TTS manager with ElevenLabs.
         
