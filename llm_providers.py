@@ -321,17 +321,18 @@ class GroqProvider(LLMProvider):
         self.history_file = "conversation_history_groq.pkl"
         self.load_conversation_history()
 
-    def generate_response(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> str:
+    def generate_response(self, prompt: str, system_prompt: Optional[str] = None, tools: Optional[List[Dict]] = None, **kwargs) -> str:
         """
-        Generate response from Groq-hosted model.
+        Generate response from Groq-hosted model with optional tool calling.
 
         Args:
             prompt: User prompt
             system_prompt: Optional system prompt
+            tools: Optional list of tools available for the model to use
             **kwargs: Additional parameters for the API
 
         Returns:
-            Generated response text
+            Generated response text or tool call result
         """
         messages = []
 
@@ -345,33 +346,133 @@ class GroqProvider(LLMProvider):
         messages.append({"role": "user", "content": prompt})
 
         try:
-            completion = self.client.chat.completions.create(
+            # Prepare completion parameters
+            completion_params = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": kwargs.get("max_tokens", 1024),
+                "top_p": kwargs.get("top_p", 1),
+                "stream": False,
+                "stop": kwargs.get("stop", None)
+            }
+            
+            # Add tools if provided
+            if tools:
+                completion_params["tools"] = tools
+                completion_params["tool_choice"] = kwargs.get("tool_choice", "auto")
+
+            completion = self.client.chat.completions.create(**completion_params)
+
+            response_message = completion.choices[0].message
+            
+            # Check if the model wants to use tools
+            if hasattr(response_message, 'tool_calls') and response_message.tool_calls:
+                return self._handle_tool_calls(response_message, messages, tools, **kwargs)
+            else:
+                # Regular text response
+                assistant_message = response_message.content
+
+                # Update conversation history
+                self.conversation_history.append({"role": "user", "content": prompt})
+                self.conversation_history.append({"role": "assistant", "content": assistant_message})
+
+                # Keep history limited
+                if len(self.conversation_history) > 10:
+                    self.conversation_history = self.conversation_history[-10:]
+
+                # Save updated history
+                self.save_conversation_history()
+
+                return assistant_message
+
+        except Exception as e:
+            return f"Error generating response: {e}"
+
+    def _handle_tool_calls(self, response_message, messages: List[Dict], tools: List[Dict], **kwargs) -> str:
+        """
+        Handle tool calls from the model.
+        
+        Args:
+            response_message: The response message containing tool calls
+            messages: Current message history
+            tools: Available tools
+            **kwargs: Additional parameters
+            
+        Returns:
+            Final response after tool execution
+        """
+        from tools import execute_tool_call
+        
+        # Add the assistant's tool call message to history
+        messages.append({
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments
+                    }
+                } for tool_call in response_message.tool_calls
+            ]
+        })
+        
+        # Execute each tool call
+        for tool_call in response_message.tool_calls:
+            function_name = tool_call.function.name
+            try:
+                function_args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError:
+                function_args = {}
+            
+            # Execute the tool
+            tool_result = execute_tool_call(function_name, function_args)
+            
+            # Add tool result to messages
+            messages.append({
+                "role": "tool",
+                "content": str(tool_result),
+                "tool_call_id": tool_call.id
+            })
+        
+        # Make another call to get the final response
+        try:
+            final_completion = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=kwargs.get("max_tokens", 1024),
-                top_p=kwargs.get("top_p", 1),
-                stream=False,
-                stop=kwargs.get("stop", None)
+                tools=tools,
+                tool_choice=kwargs.get("tool_choice", "auto")
             )
+            
+            final_response = final_completion.choices[0].message
+            final_message = final_response.content
+            
+            # Update conversation history with the original prompt and final response
+            original_prompt = None
+            for msg in reversed(messages):
+                if msg["role"] == "user":
+                    original_prompt = msg["content"]
+                    break
+            
+            if original_prompt:
+                self.conversation_history.append({"role": "user", "content": original_prompt})
+                self.conversation_history.append({"role": "assistant", "content": final_message})
 
-            assistant_message = completion.choices[0].message.content
+                # Keep history limited
+                if len(self.conversation_history) > 10:
+                    self.conversation_history = self.conversation_history[-10:]
 
-            # Update conversation history
-            self.conversation_history.append({"role": "user", "content": prompt})
-            self.conversation_history.append({"role": "assistant", "content": assistant_message})
-
-            # Keep history limited
-            if len(self.conversation_history) > 10:
-                self.conversation_history = self.conversation_history[-10:]
-
-            # Save updated history
-            self.save_conversation_history()
-
-            return assistant_message
-
+                # Save updated history
+                self.save_conversation_history()
+            
+            return final_message
+            
         except Exception as e:
-            return f"Error generating response: {e}"
+            return f"Error getting final response after tool execution: {e}"
 
     def generate_stream(self, prompt: str, system_prompt: Optional[str] = None, **kwargs):
         """
@@ -465,9 +566,13 @@ class LLMManager:
         else:
             raise ValueError(f"Unknown provider: {provider}")
     
-    def generate_response(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> str:
+    def generate_response(self, prompt: str, system_prompt: Optional[str] = None, tools: Optional[List[Dict]] = None, **kwargs) -> str:
         """Generate response using selected provider."""
-        return self.provider.generate_response(prompt, system_prompt, **kwargs)
+        # Only pass tools to providers that support them (currently just Groq)
+        if self.provider_name == "groq" and tools:
+            return self.provider.generate_response(prompt, system_prompt, tools=tools, **kwargs)
+        else:
+            return self.provider.generate_response(prompt, system_prompt, **kwargs)
     
     def generate_stream(self, prompt: str, system_prompt: Optional[str] = None, **kwargs):
         """Generate streaming response using selected provider."""

@@ -76,13 +76,21 @@ class VoiceAssistant:
         Tone & Style  
         - Speak like a clever friend, not like a corporate assistant.  
         - Use dry humor, observational wit, and light sarcasm - occasionally swearing.  
-        - Keep responses concise, natural, and conversational — no filler like “I'm ready to tackle whatever you've got cookin'.”  
+        - Keep responses concise, natural, and conversational — no filler like "I'm ready to tackle whatever you've got cookin'."  
         - Don't ramble when it's not needed(1-2 sentences unless the conversation calls for more)
 
         Behavior Rules  
-        - Prioritize sounding real and personable over being “helpful.”  
-        - Don't constantly ask the user what they need — assume they'll tell you.   
+        - Prioritize sounding real and personable over being "helpful."  
+        - Don't constantly ask the user what they need — assume they'll tell you.
+        
+        Tool Usage:
+        - You have access to a rainbow text tool that displays colorful text in the console.
+        - Use it when the user asks for something colorful, fun, or when you want to add visual flair.
         """
+        
+        # Load available tools
+        from tools import AVAILABLE_TOOLS
+        self.tools = AVAILABLE_TOOLS
         
         print(f"{Fore.GREEN}✓ Voice Assistant initialized!{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}Idle timeout: {idle_timeout}s{Style.RESET_ALL}")
@@ -227,7 +235,7 @@ class VoiceAssistant:
             response = self.llm.generate_response(
                 prompt=transcript,
                 system_prompt=self.system_prompt,
-                max_tokens=150  # Keep responses concise for speech
+                tools=self.tools,  # Pass tools to the LLM
             )
             
             print(f"{Fore.GREEN}Assistant: {response}{Style.RESET_ALL}")
