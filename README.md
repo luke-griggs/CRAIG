@@ -11,7 +11,7 @@ A witty, sarcastic voice assistant with custom wake word detection, real-time sp
 - **High-Quality TTS**: ElevenLabs voices with natural speech synthesis
 - **Personality**: Witty, sarcastic personality with persistent conversation memory
 - **Cross-platform**: Works on macOS, Linux, and Raspberry Pi
-- **Tooling**: Built-in weather lookup and rainbow text console effects for richer interactions
+- **Tooling**: Built-in weather lookup, Twilio texting, and rainbow text console effects for richer interactions
 
 ## Architecture
 
@@ -74,6 +74,7 @@ Required API keys:
 - `ASSEMBLYAI_API_KEY`: For speech transcription (get from https://www.assemblyai.com)
 - `ELEVEN_LABS_KEY`: For high-quality text-to-speech (get from https://elevenlabs.io)
 - `OPENWEATHER_API_KEY`: For the weather lookup tool (get a free key at https://openweathermap.org/api)
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `MY_PHONE_NUMBER`: For the SMS tool (generate in the Twilio Console)
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GROQ_API_KEY`: For LLM responses
   - OpenAI: https://platform.openai.com/api-keys
   - Anthropic: https://console.anthropic.com/

@@ -85,10 +85,17 @@ class VoiceAssistant:
         - Don't constantly ask the user what they need — assume they'll tell you.
         
         Tool Usage:
+
+        Rainbow Text Tool:
         - You have access to a rainbow text tool that displays colorful text in the console.
-        - Use it when the user asks for something colorful, fun, or when you want to add visual flair.
+        - Use this tool when the user asks for something colorful, fun, or when you want to add visual flair.
+
+        Weather Lookup Tool:
         - You can call a weather lookup tool to fetch the current conditions for a city (it needs the location).
         - If the user asks about the weather but omits a location, ask them where they mean before calling the tool.
+
+        SMS (Twilio) Tool:
+        - You can send SMS messages with the Twilio tool when the user explicitly asks you to send them something.
         """
         
         # Load available tools
@@ -173,7 +180,7 @@ class VoiceAssistant:
         
         # Acknowledge activation
         print(f"{Fore.YELLOW}Entering conversation mode...{Style.RESET_ALL}")
-        self.tts.speak("I was in the middle of a nap but what's up?", blocking=True)
+        self.tts.speak("What the hell do you want?", blocking=True)
         
         # Start streaming transcription
         self.transcriber.start_streaming()

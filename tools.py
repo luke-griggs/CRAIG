@@ -6,7 +6,7 @@ Implements various tools that can be called by the LLM.
 
 import os
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import requests
 from colorama import Fore, Style, init
@@ -119,6 +119,47 @@ def weather_lookup_tool(location: str, units: str = "metric") -> str:
 
     return report
 
+
+def send_sms_tool(message: str) -> str:
+    """Send an SMS message using the Twilio API."""
+    if not message:
+        return "SMS tool error: message text is required."
+
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    from_number = os.getenv("TWILIO_PHONE_NUMBER")
+    default_to = os.getenv("MY_PHONE_NUMBER")
+
+    if not all([account_sid, auth_token, from_number]):
+        return "SMS tool error: Twilio credentials are missing from the environment."
+
+    destination = to_number or default_to
+    if not destination:
+        return "SMS tool error: destination number is not provided or configured."
+
+    try:
+        from twilio.rest import Client
+    except ImportError:
+        return "SMS tool error: Twilio SDK not installed. Run `pip install twilio`."
+
+    try:
+        client = Client(account_sid, auth_token)
+        result = client.messages.create(body=message, from_=from_number, to=destination)
+    except Exception as exc:
+        return f"SMS tool error: {exc}"
+
+    sid_value = getattr(result, "sid", "") or ""
+    sid_suffix = sid_value[-6:] if sid_value else "unknown"
+
+    print(f"\n{'='*50}")
+    print(f"{Fore.WHITE}📨 SMS TOOL ACTIVATED 📨{Style.RESET_ALL}")
+    print(f"{'='*50}")
+    print(f"{Fore.GREEN}Message queued for {destination}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}Twilio confirmation: *{sid_suffix}{Style.RESET_ALL}")
+    print(f"{'='*50}\n")
+
+    return f"SMS queued to {destination}. Twilio confirmation suffix: *{sid_suffix}"
+
 # Tool definitions for Groq API
 AVAILABLE_TOOLS = [
     {
@@ -158,13 +199,31 @@ AVAILABLE_TOOLS = [
                 "required": ["location"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_sms_tool",
+            "description": "Send a text message through Twilio. Provide the SMS body",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The SMS body to deliver."
+                    },
+                },
+                "required": ["message"]
+            }
+        }
     }
 ]
 
 # Map of tool names to functions
 TOOL_FUNCTIONS = {
     "rainbow_text_tool": rainbow_text_tool,
-    "weather_lookup_tool": weather_lookup_tool
+    "weather_lookup_tool": weather_lookup_tool,
+    "send_sms_tool": send_sms_tool
 }
 
 def execute_tool_call(tool_name: str, arguments: Dict[str, Any]) -> str:
